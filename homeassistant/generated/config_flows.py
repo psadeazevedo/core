@@ -122,6 +122,7 @@ FLOWS = [
     "nuheat",
     "nut",
     "nws",
+    "ondilo_ico",
     "onvif",
     "opentherm_gw",
     "openuv",
