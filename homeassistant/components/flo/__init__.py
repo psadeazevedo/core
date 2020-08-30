@@ -19,7 +19,7 @@ CONFIG_SCHEMA = vol.Schema({DOMAIN: vol.Schema({})}, extra=vol.ALLOW_EXTRA)
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor"]
+PLATFORMS = ["binary_sensor", "sensor", "switch"]
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
@@ -36,8 +36,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass.data[DOMAIN][entry.entry_id]["client"] = client = await async_get_api(
             entry.data[CONF_USERNAME], entry.data[CONF_PASSWORD], session=session
         )
-    except RequestError:
-        raise ConfigEntryNotReady
+    except RequestError as err:
+        raise ConfigEntryNotReady from err
 
     user_info = await client.user.get_info(include_location_info=True)
 

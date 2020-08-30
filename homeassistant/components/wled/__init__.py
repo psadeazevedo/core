@@ -111,13 +111,19 @@ class WLEDDataUpdateCoordinator(DataUpdateCoordinator[WLEDDevice]):
     """Class to manage fetching WLED data from single endpoint."""
 
     def __init__(
-        self, hass: HomeAssistant, *, host: str,
+        self,
+        hass: HomeAssistant,
+        *,
+        host: str,
     ):
         """Initialize global WLED data updater."""
         self.wled = WLED(host, session=async_get_clientsession(hass))
 
         super().__init__(
-            hass, _LOGGER, name=DOMAIN, update_interval=SCAN_INTERVAL,
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            update_interval=SCAN_INTERVAL,
         )
 
     def update_listeners(self) -> None:
@@ -130,7 +136,7 @@ class WLEDDataUpdateCoordinator(DataUpdateCoordinator[WLEDDevice]):
         try:
             return await self.wled.update(full_update=not self.last_update_success)
         except WLEDError as error:
-            raise UpdateFailed(f"Invalid response from API: {error}")
+            raise UpdateFailed(f"Invalid response from API: {error}") from error
 
 
 class WLEDEntity(Entity):

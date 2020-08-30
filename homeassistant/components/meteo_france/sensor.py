@@ -15,13 +15,14 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     ATTR_NEXT_RAIN_1_HOUR_FORECAST,
+    ATTR_NEXT_RAIN_DT_REF,
     ATTRIBUTION,
     COORDINATOR_ALERT,
     COORDINATOR_FORECAST,
     COORDINATOR_RAIN,
     DOMAIN,
     ENTITY_API_DATA_PATH,
-    ENTITY_CLASS,
+    ENTITY_DEVICE_CLASS,
     ENTITY_ENABLE,
     ENTITY_ICON,
     ENTITY_NAME,
@@ -64,7 +65,8 @@ async def async_setup_entry(
             entities.append(MeteoFranceSensor(sensor_type, coordinator_forecast))
 
     async_add_entities(
-        entities, False,
+        entities,
+        False,
     )
 
 
@@ -128,7 +130,7 @@ class MeteoFranceSensor(Entity):
     @property
     def device_class(self):
         """Return the device class."""
-        return SENSOR_TYPES[self._type][ENTITY_CLASS]
+        return SENSOR_TYPES[self._type][ENTITY_DEVICE_CLASS]
 
     @property
     def entity_registry_enabled_default(self) -> bool:
@@ -170,23 +172,27 @@ class MeteoFranceRainSensor(MeteoFranceSensor):
     @property
     def state(self):
         """Return the state."""
-        next_rain_date_locale = self.coordinator.data.next_rain_date_locale()
+        # search first cadran with rain
+        next_rain = next(
+            (cadran for cadran in self.coordinator.data.forecast if cadran["rain"] > 1),
+            None,
+        )
         return (
-            dt_util.as_local(next_rain_date_locale) if next_rain_date_locale else None
+            dt_util.utc_from_timestamp(next_rain["dt"]).isoformat()
+            if next_rain
+            else None
         )
 
     @property
     def device_state_attributes(self):
         """Return the state attributes."""
+        reference_dt = self.coordinator.data.forecast[0]["dt"]
         return {
-            ATTR_NEXT_RAIN_1_HOUR_FORECAST: [
-                {
-                    dt_util.as_local(
-                        self.coordinator.data.timestamp_to_locale_time(item["dt"])
-                    ).strftime("%H:%M"): item["desc"]
-                }
+            ATTR_NEXT_RAIN_DT_REF: dt_util.utc_from_timestamp(reference_dt).isoformat(),
+            ATTR_NEXT_RAIN_1_HOUR_FORECAST: {
+                f"{int((item['dt'] - reference_dt) / 60)} min": item["desc"]
                 for item in self.coordinator.data.forecast
-            ],
+            },
             ATTR_ATTRIBUTION: ATTRIBUTION,
         }
 

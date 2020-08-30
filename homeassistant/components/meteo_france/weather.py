@@ -16,6 +16,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_MODE, TEMP_CELSIUS
 from homeassistant.helpers.typing import HomeAssistantType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .const import (
     ATTRIBUTION,
@@ -46,7 +47,8 @@ async def async_setup_entry(
     async_add_entities(
         [
             MeteoFranceWeather(
-                coordinator, entry.options.get(CONF_MODE, FORECAST_MODE_DAILY),
+                coordinator,
+                entry.options.get(CONF_MODE, FORECAST_MODE_DAILY),
             )
         ],
         True,
@@ -128,15 +130,12 @@ class MeteoFranceWeather(WeatherEntity):
             for forecast in self.coordinator.data.forecast:
                 # Can have data in the past
                 if forecast["dt"] < today:
-                    _LOGGER.debug(
-                        "remove forecast in the past: %s %s", self._mode, forecast
-                    )
                     continue
                 forecast_data.append(
                     {
-                        ATTR_FORECAST_TIME: self.coordinator.data.timestamp_to_locale_time(
+                        ATTR_FORECAST_TIME: dt_util.utc_from_timestamp(
                             forecast["dt"]
-                        ),
+                        ).isoformat(),
                         ATTR_FORECAST_CONDITION: format_condition(
                             forecast["weather"]["desc"]
                         ),
