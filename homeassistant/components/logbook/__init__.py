@@ -26,6 +26,7 @@ from homeassistant.const import (
     ATTR_DOMAIN,
     ATTR_ENTITY_ID,
     ATTR_FRIENDLY_NAME,
+    ATTR_ICON,
     ATTR_NAME,
     ATTR_SERVICE,
     EVENT_CALL_SERVICE,
@@ -38,7 +39,13 @@ from homeassistant.const import (
     STATE_OFF,
     STATE_ON,
 )
-from homeassistant.core import DOMAIN as HA_DOMAIN, callback, split_entity_id
+from homeassistant.core import (
+    DOMAIN as HA_DOMAIN,
+    callback,
+    split_entity_id,
+    valid_entity_id,
+)
+from homeassistant.exceptions import InvalidEntityFormatError
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entityfilter import (
     INCLUDE_EXCLUDE_BASE_FILTER_SCHEMA,
@@ -51,8 +58,10 @@ from homeassistant.helpers.integration_platform import (
 from homeassistant.loader import bind_hass
 import homeassistant.util.dt as dt_util
 
+ENTITY_ID_JSON_TEMPLATE = '"entity_id": "{}"'
 ENTITY_ID_JSON_EXTRACT = re.compile('"entity_id": "([^"]+)"')
 DOMAIN_JSON_EXTRACT = re.compile('"domain": "([^"]+)"')
+ICON_JSON_EXTRACT = re.compile('"icon": "([^"]+)"')
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -86,7 +95,6 @@ ALL_EVENT_TYPES = [
 ]
 
 SCRIPT_AUTOMATION_EVENTS = [EVENT_AUTOMATION_TRIGGERED, EVENT_SCRIPT_STARTED]
-
 
 LOG_MESSAGE_SCHEMA = vol.Schema(
     {
@@ -214,6 +222,8 @@ class LogbookView(HomeAssistantView):
 
         hass = request.app["hass"]
 
+        entity_matches_only = "entity_matches_only" in request.query
+
         def json_events():
             """Fetch events and generate JSON."""
             return self.json(
@@ -224,6 +234,7 @@ class LogbookView(HomeAssistantView):
                     entity_id,
                     self.filters,
                     self.entities_filter,
+                    entity_matches_only,
                 )
             )
 
@@ -312,8 +323,13 @@ def humanify(hass, events, entity_attr_cache, context_lookup):
                         entity_id, domain, event, entity_attr_cache
                     ),
                     "domain": domain,
+                    "state": event.state,
                     "entity_id": entity_id,
                 }
+
+                icon = event.attributes_icon
+                if icon:
+                    data["icon"] = icon
 
                 if event.context_user_id:
                     data["context_user_id"] = event.context_user_id
@@ -390,11 +406,19 @@ def humanify(hass, events, entity_attr_cache, context_lookup):
 
 
 def _get_events(
-    hass, start_day, end_day, entity_id=None, filters=None, entities_filter=None
+    hass,
+    start_day,
+    end_day,
+    entity_id=None,
+    filters=None,
+    entities_filter=None,
+    entity_matches_only=False,
 ):
     """Get events for a period of time."""
     entity_attr_cache = EntityAttributeCache(hass)
     context_lookup = {None: None}
+    entity_id_lower = None
+    apply_sql_entities_filter = True
 
     def yield_events(query):
         """Yield Events that are not filtered away."""
@@ -404,15 +428,17 @@ def _get_events(
             if _keep_event(hass, event, entities_filter):
                 yield event
 
-    with session_scope(hass=hass) as session:
-        if entity_id is not None:
-            entity_ids = [entity_id.lower()]
-            entities_filter = generate_filter([], entity_ids, [], [])
-            apply_sql_entities_filter = False
-        else:
-            entity_ids = None
-            apply_sql_entities_filter = True
+    if entity_id is not None:
+        entity_id_lower = entity_id.lower()
+        if not valid_entity_id(entity_id_lower):
+            raise InvalidEntityFormatError(
+                f"Invalid entity id encountered: {entity_id_lower}. "
+                "Format should be <domain>.<object_id>"
+            )
+        entities_filter = generate_filter([], [entity_id_lower], [], [])
+        apply_sql_entities_filter = False
 
+    with session_scope(hass=hass) as session:
         old_state = aliased(States, name="old_state")
 
         query = (
@@ -458,14 +484,29 @@ def _get_events(
             .filter((Events.time_fired > start_day) & (Events.time_fired < end_day))
         )
 
-        if entity_ids:
-            query = query.filter(
-                (
-                    (States.last_updated == States.last_changed)
-                    & States.entity_id.in_(entity_ids)
+        if entity_id_lower is not None:
+            if entity_matches_only:
+                # When entity_matches_only is provided, contexts and events that do not
+                # contain the entity_id are not included in the logbook response.
+                entity_id_json = ENTITY_ID_JSON_TEMPLATE.format(entity_id_lower)
+                query = query.filter(
+                    (
+                        (States.last_updated == States.last_changed)
+                        & (States.entity_id == entity_id_lower)
+                    )
+                    | (
+                        States.state_id.is_(None)
+                        & Events.event_data.contains(entity_id_json)
+                    )
                 )
-                | (States.state_id.is_(None))
-            )
+            else:
+                query = query.filter(
+                    (
+                        (States.last_updated == States.last_changed)
+                        & (States.entity_id == entity_id_lower)
+                    )
+                    | (States.state_id.is_(None))
+                )
         else:
             query = query.filter(
                 (States.last_updated == States.last_changed)
@@ -689,6 +730,15 @@ class LazyEventPartialState:
         self.context_id = self._row.context_id
         self.context_user_id = self._row.context_user_id
         self.time_fired_minute = self._row.time_fired.minute
+
+    @property
+    def attributes_icon(self):
+        """Extract the icon from the decoded attributes or json."""
+        if self._attributes:
+            return self._attributes.get(ATTR_ICON)
+
+        result = ICON_JSON_EXTRACT.search(self._row.attributes)
+        return result and result.group(1)
 
     @property
     def data_entity_id(self):
